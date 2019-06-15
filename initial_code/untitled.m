@@ -166,7 +166,10 @@ if type==1
         symbol=strcat(StockCode,'.SZ');
     end
     location="c:\\database\equity";
-    mkdir(location);
+    if exist(location,"dir")==0
+        
+        mkdir(location);
+    end
     filename=strcat(symbol,".csv");
     site=strcat(location,"\",filename);
 else
@@ -176,7 +179,9 @@ else
         symbol=strcat(StockCode,'.SZ');
     end
     location="c:\\database\index";
-    mkdir(location);
+    if exist(location,"dir")==0
+        mkdir(location);
+    end
     filename=strcat(symbol,".csv");
     site=strcat(location,"\",filename);
 end
@@ -185,33 +190,71 @@ n=get(handles.popupmenu2,'Value')*10;
 num=years*250;
 if exist(site,"file")==2
     dd=readtable(site,'Format','%s%s%f%f%f%f%f%f%f%f%f','Delimiter','\t');
-    set(handles.text11,"String","数据读入成功，正在计算……");
     dd=dd(1:num,:);
+    set(handles.text11,"String","数据读入成功，正在计算……");
+    
 else
     set(handles.text11,"String","数据不存在，请更新数据！！！");
-    pause;
 end
 
-%calculate the CCI of TYP
+%calculate the CCI of TYP and 
 TYP=(table2array(dd(:,4))+table2array(dd(:,5))+table2array(dd(:,6)))/3;
-x=numel(TYP)-n+1;
-MA=zeros(x,1);
-AVEDEV=zeros(x,1);
-for ii=1:1:x
-    MA(ii)=sum(TYP(ii:ii+n-1))/n;
-end
+volume=table2array(dd(:,10));
 
-for jj=1:1:x
-    AVEDEV(jj)=sum(abs(TYP(jj:jj+n-1)-MA(jj)))/n;
+rtn=table2array(dd(:,9));
+x=numel(TYP)-n+1;
+MA=zeros(x,2);
+AVEDEV=zeros(x,2);
+Y=zeros(x,1);
+for ii=1:1:x
+    MA(ii,1)=sum(TYP(ii:ii+n-1))/n;
+    MA(ii,2)=sum(volume(ii:ii+n-1))/n;
+    if rtn(ii)>0
+        Y(ii)=true;
+    else
+        Y(ii)=false;
+    end
 end
-CCI=(TYP(1:x)-MA(1:x))./(0.015*AVEDEV);
-I=find(CCI<=CCI(1));
+Y=nominal(Y);
+for jj=1:1:x
+    AVEDEV(jj,1)=sum(abs(TYP(jj:jj+n-1)-MA(jj,1)))/n;
+    AVEDEV(jj,2)=sum(abs(volume(jj:jj+n-1)-MA(jj,2)))/n;
+end
+CCI1=(TYP(1:x)-MA(1:x,1))./(0.015*AVEDEV(:,1));
+CCI2=(volume(1:x)-MA(1:x,2))./(0.015*AVEDEV(:,2));
+data=[CCI1,CCI2];
+%计算预警概率
+I=find(CCI1<=CCI1(1));
 N=length(I);
-probnum=(N/numel(CCI))*100;
+probnum=(N/numel(CCI1))*100;
 prob=num2str(roundn(probnum,-2));
 prob=strcat(prob,'%');
 set(handles.text12,'String',prob);
+%SVM估计
 
+Test=data(1:round(x*0.3),:);
+Test=Test(2:end,:);
+y1=Y(1:(round(x*0.3)-1));
+Train=data((round(x*0.3)+1):end,:);
+Train=Train(2:end,:);
+y2=Y(round(x*0.3+1):x-1);
+SVMModel = fitcsvm(Train,y2,'Standardize',true,'KernelFunction','RBF',...
+    'KernelScale','auto');
+y11=predict(SVMModel,Test);
+t=0;
+
+for ii=1:1:numel(y1)
+    if (y1(ii)~=y11(ii))
+        t=t+1;
+    end
+end
+p=strcat(num2str((1-t/numel(y1))*100),"%");
+set(handles.text17,"String",p);
+if y11(1)==nominal(true)
+    set(handles.text18,"String","想啥呢，赶紧买！！");
+else
+    set(handles.text18,"String","别傻了，赶紧卖！！");
+end
 %compute and plot the quantiles and CCI in one plot
 date=dd(:,2);
 date=table2array(date);%%
@@ -226,28 +269,38 @@ for ii = 1:1:numel(date)
     mm(ii,1)=round(rem(str2double(date{ii}),10000)/100);
 end
 axes(handles.axes1);
-y=fliplr(CCI);
+
+y=fliplr(CCI1);
 xaxis=datenum(yyyy,mm,day);
-xaxis=xaxis(1:numel(CCI));
-plot(xaxis,y,'b');
+xaxis=xaxis(1:numel(CCI1));
+hold on;
+%plot(xaxis,y,'b');
 dateaxis('x',2);
 xlabel('时间');
 ylabel('CCI');
 title('CCI的历史走向');
 xmin=min(xaxis);
 xmax=max(xaxis);
-ymin=min(CCI);
-ymax=max(CCI);
+ymin=min(CCI1);
+ymax=max(CCI1);
 axis([xmin xmax ymin ymax])
-hold on;
-Q1=quantile(CCI,0.01);
-Q2=quantile(CCI,0.02);
-Q3=quantile(CCI,0.05);
-Q4=quantile(CCI,0.15);
-Q9=quantile(CCI,0.85); 
-Q10=quantile(CCI,0.95); 
-Q11=quantile(CCI,0.98); 
-Q12=quantile(CCI,0.99); 
+%h=waitbar(0,"计算中请稍后……");
+plot(xaxis,y);
+% for jj=1:1:numel(CCI1)
+%     plot(xaxis(numel(CCI1)-jj+1),y(jj),".--","MarkerSize",10);
+%     waitbar(jj/numel(CCI))
+% end
+%close(h);
+
+
+Q1=quantile(CCI1,0.01);
+Q2=quantile(CCI1,0.02);
+Q3=quantile(CCI1,0.05);
+Q4=quantile(CCI1,0.15);
+Q9=quantile(CCI1,0.85); 
+Q10=quantile(CCI1,0.95); 
+Q11=quantile(CCI1,0.98); 
+Q12=quantile(CCI1,0.99); 
 plot(xaxis,Q1*ones(numel(xaxis)),'r--');
 plot(xaxis,Q2*ones(numel(xaxis)),'r--');
 plot(xaxis,Q3*ones(numel(xaxis)),'r--');
@@ -272,7 +325,7 @@ set(handles.text11,"String","图一绘制成功（图二绘制中）！！！");
 
 %%plot the one year data
 x=250-n+1;
-CCI=CCI(1:x);
+CCI=CCI1(1:x);
 I=find(CCI<=CCI(1));
 N=length(I);
 probnum=(N/numel(CCI))*100;
@@ -417,10 +470,6 @@ elseif type==2
     else
         symbol=strcat(StockCode,'.SZ');
     end
-elseif type==3
-    method='F';
-    flag="index_basic";
-    
 end
 
 %%check the list
@@ -429,35 +478,58 @@ basic=strcat("c:\\database\",flag,".csv");
 if exist("c:\\database","dir")==0
     mkdir(strcat("c:\\database"));
     if exist(basic,"file")==0
-        bb=api.query(flag);
+        if flag=="stock_basic"
+            bb=api.query(flag);
+        else
+            bb=readtable("index_basic.csv",'Delimiter',',');
+        end
         writetable(bb,basic,'Delimiter','\t');
     else
         bb=readtable(basic,'Delimiter','\t');
     end
 else
     if exist(basic,"file")==0
-        bb=api.query(flag);
+        if flag=="stock_basic"
+            bb=api.query(flag);
+        else
+            bb=readtable("index_basic.csv",'Delimiter',',');
+        end
         writetable(bb,basic,'Delimiter','\t');
     else
         bb=readtable(basic,'Delimiter','\t');
     end
 end
-namelist=table2array(bb(:,2));%%
+namelist=table2array(bb(:,1));%%
 order=0;
-for ii=1:1:numel(namelist)
-    if namelist(ii)==str2double(StockCode)
-        order=ii; 
-        name=table2array(bb(order,3));
-        name=name{1};
-        set(handles.text13,"String",name);
-        break
+if type==1
+    for ii=1:1:numel(namelist)
+        if strcmp(table2array(namelist(ii)),symbol)
+            order=ii;
+            name=table2array(bb(order,3));
+            name=name{1};
+            set(handles.text13,"String",name);
+            break
+        end
+    end
+    if order==0
+        set(handles.text13,"String","该证券不存在！！");%%如何暂停？？
+        close all;
+    end
+else
+    for ii=1:1:numel(namelist)
+        if strcmp(table2array(namelist(ii)),symbol)
+            order=ii;
+            name=table2array(bb(order,2));
+            name=name{1};
+            set(handles.text13,"String",name);
+            break
+        end
+    end
+    if order==0
+        set(handles.text13,"String","该证券不存在！！");%%如何暂停？？
+        close all;
     end
 end
-if order==0
-    set(handles.text13,"String","该证券不存在！！");%%如何暂停？？
-    close all;
-end
-
 filename=strcat(symbol,".csv");
 %second:read the file,creat a new one if not exists
 if type==1
